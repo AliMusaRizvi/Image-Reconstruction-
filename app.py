@@ -593,21 +593,20 @@ def tensor_to_np(t):
     return denorm(t).squeeze(0).permute(1,2,0).cpu().numpy()
 
 # ── load model ────────────────────────────────────────────────────────────────
-
 @st.cache_resource
-def load_model(mask_ratio: float):
-    cfg = MAEConfig(mask_ratio=mask_ratio)
+def load_model():
+    cfg = MAEConfig()                    # default mask_ratio, doesn't matter
     cfg.num_patches = (cfg.image_size // cfg.patch_size) ** 2
     cfg.num_visible = int(cfg.num_patches * (1 - cfg.mask_ratio))
     cfg.num_masked  = cfg.num_patches - cfg.num_visible
+
     model = MAE(cfg)
 
-    # Try local first, then fall back to HuggingFace Hub
     local_path = "model_weights.pth"
     if not os.path.exists(local_path):
         with st.spinner("Downloading model weights from HuggingFace…"):
             local_path = hf_hub_download(
-                repo_id="AliMusaRizvi/mae",  
+                repo_id="AliMusaRizvi/mae",
                 filename="model_weights.pth",
             )
 
@@ -615,6 +614,14 @@ def load_model(mask_ratio: float):
     model.load_state_dict(checkpoint["state_dict"])
     model.eval()
     return model, cfg
+
+
+def apply_mask_ratio(cfg, mask_ratio: float):
+    """Patch cfg with the user-selected ratio — no reload needed."""
+    cfg.mask_ratio  = mask_ratio
+    cfg.num_visible = int(cfg.num_patches * (1 - mask_ratio))
+    cfg.num_masked  = cfg.num_patches - cfg.num_visible
+    return cfg
 
 # ═════════════════════════════════════════════════════════════════════════════
 # UI
@@ -683,7 +690,8 @@ if uploaded_file is not None:
 # ── main reconstruction logic ─────────────────────────────────────────────────
 if uploaded_file is not None and run_pressed:
     image = Image.open(uploaded_file).convert("RGB")
-    model, cfg = load_model(mask_ratio)
+    model, cfg = load_model()
+    cfg = apply_mask_ratio(cfg, mask_ratio)
 
     st.markdown("<hr>", unsafe_allow_html=True)
 
