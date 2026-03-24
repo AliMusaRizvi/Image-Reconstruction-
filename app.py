@@ -10,7 +10,8 @@ import torchvision.transforms as T
 import dataclasses
 from dataclasses import dataclass
 import time
-
+from huggingface_hub import hf_hub_download
+import os
 # ── page config ──────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="PixelMend · Image Recovery",
@@ -592,6 +593,7 @@ def tensor_to_np(t):
     return denorm(t).squeeze(0).permute(1,2,0).cpu().numpy()
 
 # ── load model ────────────────────────────────────────────────────────────────
+
 @st.cache_resource
 def load_model(mask_ratio: float):
     cfg = MAEConfig(mask_ratio=mask_ratio)
@@ -599,11 +601,18 @@ def load_model(mask_ratio: float):
     cfg.num_visible = int(cfg.num_patches * (1 - cfg.mask_ratio))
     cfg.num_masked  = cfg.num_patches - cfg.num_visible
     model = MAE(cfg)
-    try:
-        checkpoint = torch.load('model_weights.pth', map_location='cpu')
-        model.load_state_dict(checkpoint['state_dict'])
-    except FileNotFoundError:
-        pass   # demo mode — random weights
+
+    # Try local first, then fall back to HuggingFace Hub
+    local_path = "model_weights.pth"
+    if not os.path.exists(local_path):
+        with st.spinner("Downloading model weights from HuggingFace…"):
+            local_path = hf_hub_download(
+                repo_id="AliMusaRizvi/mae",  
+                filename="model_weights.pth",
+            )
+
+    checkpoint = torch.load(local_path, map_location="cpu")
+    model.load_state_dict(checkpoint["state_dict"])
     model.eval()
     return model, cfg
 
