@@ -611,9 +611,8 @@ def load_model():
             from huggingface_hub import hf_hub_download
             with st.spinner("Downloading model weights from HuggingFace…"):
                 weights_path = hf_hub_download(
-                    repo_id=st.secrets["AliMusaRizvi/mae"],
+                    repo_id="AliMusaRizvi/mae",       
                     filename="model_weights.pth",
-                    token=st.secrets.get("HF_TOKEN"),   # only needed for private repos
                 )
         except Exception as e:
             st.warning(f"Could not load weights: {e}. Running with random weights.")
@@ -628,7 +627,7 @@ def load_model():
 
 def apply_mask_ratio(cfg, mask_ratio: float):
     """Patch cfg with user-selected ratio — no model reload needed."""
-    cfg = dataclasses.replace(cfg, mask_ratio=mask_ratio)
+    cfg.mask_ratio  = mask_ratio
     cfg.num_visible = int(cfg.num_patches * (1 - mask_ratio))
     cfg.num_masked  = cfg.num_patches - cfg.num_visible
     return cfg
