@@ -611,7 +611,7 @@ def load_model():
             from huggingface_hub import hf_hub_download
             with st.spinner("Downloading model weights from HuggingFace…"):
                 weights_path = hf_hub_download(
-                    repo_id=st.secrets["HF_REPO_ID"],
+                    repo_id=st.secrets["AliMusaRizvi/mae"],
                     filename="model_weights.pth",
                     token=st.secrets.get("HF_TOKEN"),   # only needed for private repos
                 )
