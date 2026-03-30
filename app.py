@@ -634,7 +634,7 @@ def load_model():
 
 def apply_mask_ratio(cfg, mask_ratio: float):
     """Patch cfg with user-selected ratio — no model reload needed."""
-    cfg = dataclasses.replace(cfg, mask_ratio=mask_ratio)
+    cfg.mask_ratio  = mask_ratio
     cfg.num_visible = int(cfg.num_patches * (1 - mask_ratio))
     cfg.num_masked  = cfg.num_patches - cfg.num_visible
     return cfg
