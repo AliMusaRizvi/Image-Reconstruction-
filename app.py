@@ -12,14 +12,14 @@ import dataclasses
 from dataclasses import dataclass
 import time
 
-#  page config 
+#page config
 st.set_page_config(
     page_title="PixelMend · Image Recovery",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
 
-#  global styles 
+# global styles
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@400;600;800&display=swap');
@@ -271,7 +271,7 @@ hr { border-color: rgba(255,255,255,0.05) !important; margin: 2.5rem 0 !importan
 </style>
 """, unsafe_allow_html=True)
 
-# Configuration 
+# Configuration
 @dataclass
 class MAEConfig:
     image_size: int = 224
@@ -286,7 +286,7 @@ class MAEConfig:
     dec_heads: int = 6
     dec_mlp_ratio: float = 4.0
 
-#  Building blocks 
+# ── Building blocks ───────────────────────────────────────────────────────────
 class RMSNorm(nn.Module):
     def __init__(self, dim, eps=1e-6):
         super().__init__()
@@ -505,7 +505,7 @@ class MAE(nn.Module):
             perm     = torch.randperm(masked_indices.size(0))
             shuffled = masked_indices[perm]
             n_mask   = shuffled.size(0)
-            STEPS    = 12  # number of reveal steps
+            STEPS    = 20  # number of reveal steps — smoother patch-by-patch animation
             batch    = max(1, n_mask // STEPS)
 
             current_mask = torch.zeros(B, N, device=imgs.device)
@@ -522,12 +522,12 @@ class MAE(nn.Module):
                        f"Masking patches… {int(current_mask.sum().item())} / {n_mask}",
                        step, STEPS)
 
-            #  Phase 2: encode 
+            # Phase 2: encode 
             yield ("encode", None, 0.32, "Running encoder…", 0, 1)
             latent = self.encoder(patches, ids_keep)
             yield ("encode", None, 0.42, "Encoder complete — building decoder input…", 1, 1)
 
-            #  Phase 3: decoder block-by-block 
+            # Phase 3: decoder block-by-block
             dec = self.decoder
             x   = dec.enc_to_dec(latent)
             mask_tokens = dec.mask_token.expand(B, N - nv, -1)
@@ -542,6 +542,14 @@ class MAE(nn.Module):
             n_blocks = len(dec.blocks)
             mean = patches.mean(-1, keepdim=True)
             var  = patches.var(-1, keepdim=True)
+
+            # Yield the fully masked image as the FIRST decode frame so the
+            # recon panel shows the masked state before reconstruction begins.
+            masked_seed = patches.clone()
+            masked_seed[mask_full.bool()] = 0.5
+            masked_seed_img = unpatchify(masked_seed, self.cfg.patch_size, self.cfg.image_size)
+            yield ("decode", masked_seed_img, 0.44,
+                   "Starting reconstruction…", -1, n_blocks)
 
             for i, block in enumerate(dec.blocks):
                 x_full = block(x_full)
@@ -592,7 +600,6 @@ def denorm(t):
 def tensor_to_np(t):
     return denorm(t).squeeze(0).permute(1,2,0).cpu().numpy()
 
-#  load model 
 # mask_ratio is NOT a parameter here — weights are identical regardless of ratio.
 # Masking is applied dynamically inside _mask() at inference time.
 @st.cache_resource
@@ -627,7 +634,7 @@ def load_model():
 
 def apply_mask_ratio(cfg, mask_ratio: float):
     """Patch cfg with user-selected ratio — no model reload needed."""
-    cfg.mask_ratio  = mask_ratio
+    cfg = dataclasses.replace(cfg, mask_ratio=mask_ratio)
     cfg.num_visible = int(cfg.num_patches * (1 - mask_ratio))
     cfg.num_masked  = cfg.num_patches - cfg.num_visible
     return cfg
@@ -644,7 +651,7 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-#  upload + controls 
+# upload + controls
 uploaded_file = st.file_uploader(
     "Drop image here",
     type=["jpg", "jpeg", "png"],
@@ -652,7 +659,7 @@ uploaded_file = st.file_uploader(
     label_visibility="collapsed",
 )
 
-#  masking ratio — compact inline row 
+# masking ratio — compact inline row
 n_patches = (224 // 16) ** 2  # 196
 
 col_lbl, col_sl, col_val = st.columns([1.4, 4, 0.8])
@@ -685,14 +692,14 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-#  run button 
+# run button
 run_pressed = False
 if uploaded_file is not None:
     _, btn_col, _ = st.columns([1, 2, 1])
     with btn_col:
         run_pressed = st.button("✦  Reconstruct Image")
 
-#  live reconstruction fragment 
+# live reconstruction fragment
 # @st.fragment isolates this section so Streamlit flushes every st.empty()
 # update to the browser immediately instead of buffering until script end.
 @st.fragment
@@ -729,7 +736,7 @@ def run_reconstruction(image, mask_ratio):
                    'border-radius:3px;">✦ Complete</span>'),
     }
 
-    #  phase label placeholder (above columns) 
+    # phase label placeholder
     phase_label = st.empty()
 
     # ── three columns — placeholders created DIRECTLY on the column object ────
@@ -757,17 +764,23 @@ def run_reconstruction(image, mask_ratio):
     mask_ph  = col_mask.empty()
     recon_ph = col_recon.empty()
 
-    #  progress bar + status 
+    # progress bar + status
     progress_bar = st.progress(0.0)
     status_text  = st.empty()
     block_row    = st.empty()
 
-    # seed both panels with the original image until animation starts
+    # seed mask panel with the original; recon panel starts blank
     input_tensor = preprocess_image(image)
-    mask_ph.image(tensor_to_np(input_tensor),  use_container_width=True)
-    recon_ph.image(tensor_to_np(input_tensor), use_container_width=True)
+    mask_ph.image(tensor_to_np(input_tensor), use_container_width=True)
+    recon_ph.markdown(
+        '<div style="background:#0d1820;border-radius:8px;height:224px;'
+        'display:flex;align-items:center;justify-content:center;'
+        'font-family:Space Mono,monospace;font-size:0.65rem;'
+        'letter-spacing:0.12em;color:#1a3040;">AWAITING RECONSTRUCTION</div>',
+        unsafe_allow_html=True,
+    )
 
-    # helpers 
+    # helpers
     def set_phase(p):
         phase_label.markdown(
             f'<div style="text-align:center;margin-bottom:0.6rem;">{PHASE_HTML[p]}</div>',
@@ -796,7 +809,7 @@ def run_reconstruction(image, mask_ratio):
             unsafe_allow_html=True,
         )
 
-    #  run the generator — every yield flushes a frame to the browser
+    # run the generator — every yield flushes a frame to the browser 
     prev_phase   = None
     n_dec_blocks = cfg.dec_depth
 
@@ -811,16 +824,21 @@ def run_reconstruction(image, mask_ratio):
         if phase == "mask" and img_t is not None:
             mask_ph.image(tensor_to_np(img_t), use_container_width=True)
             block_row.empty()
-            time.sleep(0.055)
+            time.sleep(0.18)   # 20 steps × 0.18s ≈ 3.6s total masking animation
 
         elif phase == "encode":
-            time.sleep(0.12)
+            time.sleep(0.5)    # brief pause while encoder runs
 
         elif phase == "decode" and img_t is not None:
             recon_ph.image(tensor_to_np(img_t), use_container_width=True)
-            draw_block_pips(blk_i + 1, blk_n)
-            time.sleep(0.07)
+            if blk_i == -1:
+                # seed frame — show masked patches for a full second before block 1
+                time.sleep(1.2)
+            else:
+                draw_block_pips(blk_i + 1, blk_n)
+                time.sleep(0.38)   # 12 blocks × 0.38s ≈ 4.6s total decode animation
 
+    # done
     set_phase("done")
     progress_bar.progress(1.0)
     status_text.markdown(
@@ -830,6 +848,7 @@ def run_reconstruction(image, mask_ratio):
     )
     draw_block_pips(n_dec_blocks, n_dec_blocks)
 
+    # ── stats ─────────────────────────────────────────────────────────────────
     n_vis  = cfg.num_visible
     n_mask = cfg.num_masked
     pct    = int(mask_ratio * 100)
@@ -855,6 +874,8 @@ def run_reconstruction(image, mask_ratio):
     </div>
     """, unsafe_allow_html=True)
 
+
+# trigger
 if uploaded_file is not None and run_pressed:
     image = Image.open(uploaded_file).convert("RGB")
     run_reconstruction(image, mask_ratio)
